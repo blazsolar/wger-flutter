@@ -71,6 +71,12 @@ class _AuthCardState extends ConsumerState<AuthCard> {
   bool _useUsernameAndPassword = true;
   var _isLoading = false;
 
+  /// User-defined custom request headers for a self-hosted server (e.g.
+  /// Cloudflare Access service tokens). Edited in the advanced sheet and sent
+  /// with every request once logged in. Only applied while a custom server is
+  /// selected.
+  Map<String, String> _customHeaders = {};
+
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _password2Controller = TextEditingController();
@@ -120,6 +126,11 @@ class _AuthCardState extends ConsumerState<AuthCard> {
     if (serverUrl.isEmpty) {
       serverUrl = kDebugMode ? DEFAULT_SERVER_TEST : DEFAULT_SERVER_PROD;
     }
+    // Make the entered custom headers active before the browser round-trip so
+    // the deep-link token redemption that follows can reach a gated server.
+    ref
+        .read(authProvider.notifier)
+        .setCustomHeaders(_hideCustomServer ? const {} : _customHeaders);
     final state = await issueAppAuthState(serverUrl);
     await launchUrl(
       Uri.parse('$serverUrl/user/app-auth/?state=$state'),
@@ -160,6 +171,10 @@ class _AuthCardState extends ConsumerState<AuthCard> {
       serverUrl = serverUrl.substring(0, serverUrl.length - 1);
     }
 
+    // Custom headers only apply to a self-hosted server; the official server
+    // must send none (and clears any previously stored ones).
+    final customHeaders = _hideCustomServer ? <String, String>{} : _customHeaders;
+
     try {
       final authNotifier = ref.read(authProvider.notifier);
       // Login existing user
@@ -170,6 +185,7 @@ class _AuthCardState extends ConsumerState<AuthCard> {
           _passwordController.text,
           serverUrl,
           _refreshTokenController.text,
+          customHeaders: customHeaders,
         );
 
         // Register new user
@@ -180,6 +196,7 @@ class _AuthCardState extends ConsumerState<AuthCard> {
           email: _emailController.text,
           serverUrl: serverUrl,
           locale: Localizations.localeOf(context).languageCode,
+          customHeaders: customHeaders,
         );
       }
 
@@ -254,10 +271,16 @@ class _AuthCardState extends ConsumerState<AuthCard> {
       initialUsePassword: _useUsernameAndPassword,
       loginMode: _authMode == AuthMode.login,
       serverUrlController: _serverUrlController,
+      initialHeaders: _customHeaders,
       onChanged: (hideCustomServer, usePassword) {
         setState(() {
           _hideCustomServer = hideCustomServer;
           _useUsernameAndPassword = usePassword;
+        });
+      },
+      onHeadersChanged: (headers) {
+        setState(() {
+          _customHeaders = headers;
         });
       },
     ).then((_) {

@@ -132,6 +132,34 @@
   "@serverOptionSelfHostedTitle": {},
   "serverOptionSelfHostedDetail": "Connect to your own instance",
   "@serverOptionSelfHostedDetail": {},
+  "customHeadersSectionLabel": "Custom headers",
+  "@customHeadersSectionLabel": {
+    "description": "Section label in the advanced login sheet for user-defined HTTP request headers"
+  },
+  "customHeadersHint": "Sent with every request to this server, e.g. Cloudflare Access service tokens",
+  "@customHeadersHint": {
+    "description": "Explanation shown under the custom headers section in the advanced login sheet"
+  },
+  "customHeaderNameLabel": "Header",
+  "@customHeaderNameLabel": {
+    "description": "Label for the input field holding a custom HTTP header's name"
+  },
+  "customHeaderValueLabel": "Value",
+  "@customHeaderValueLabel": {
+    "description": "Label for the input field holding a custom HTTP header's value"
+  },
+  "customHeaderAdd": "Add header",
+  "@customHeaderAdd": {
+    "description": "Button that adds another custom HTTP header row"
+  },
+  "customHeaderNameRequired": "Enter a header name",
+  "@customHeaderNameRequired": {
+    "description": "Validation message when a custom header has a value but no name"
+  },
+  "customHeaderValueRequired": "Enter a value",
+  "@customHeaderValueRequired": {
+    "description": "Validation message when a custom header has a name but no value"
+  },
   "authOptionPasswordTitle": "Username and password",
   "@authOptionPasswordTitle": {},
   "signInWithToken": "Sign in with token",

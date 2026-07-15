@@ -31,7 +31,9 @@ Future<void> showAdvancedSheet({
   required bool initialUsePassword,
   required bool loginMode,
   required TextEditingController serverUrlController,
+  required Map<String, String> initialHeaders,
   required void Function(bool hideCustomServer, bool usePassword) onChanged,
+  required void Function(Map<String, String> headers) onHeadersChanged,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -42,7 +44,9 @@ Future<void> showAdvancedSheet({
       initialUsePassword: initialUsePassword,
       loginMode: loginMode,
       serverUrlController: serverUrlController,
+      initialHeaders: initialHeaders,
       onChanged: onChanged,
+      onHeadersChanged: onHeadersChanged,
     ),
   );
 }
@@ -52,14 +56,18 @@ class AdvancedSheet extends StatefulWidget {
   final bool initialUsePassword;
   final bool loginMode;
   final TextEditingController serverUrlController;
+  final Map<String, String> initialHeaders;
   final void Function(bool hideCustomServer, bool usePassword) onChanged;
+  final void Function(Map<String, String> headers) onHeadersChanged;
 
   const AdvancedSheet({
     required this.initialHideCustomServer,
     required this.initialUsePassword,
     required this.loginMode,
     required this.serverUrlController,
+    required this.initialHeaders,
     required this.onChanged,
+    required this.onHeadersChanged,
     super.key,
   });
 
@@ -67,21 +75,75 @@ class AdvancedSheet extends StatefulWidget {
   State<AdvancedSheet> createState() => _AdvancedSheetState();
 }
 
+/// Editable name/value pair backing one custom-header row. Owns its two
+/// controllers so the sheet can add/remove rows dynamically.
+class _HeaderRow {
+  final TextEditingController name;
+  final TextEditingController value;
+
+  _HeaderRow({String name = '', String value = ''})
+    : name = TextEditingController(text: name),
+      value = TextEditingController(text: value);
+
+  void dispose() {
+    name.dispose();
+    value.dispose();
+  }
+}
+
 class _AdvancedSheetState extends State<AdvancedSheet> {
   late bool _hideCustomServer;
   late bool _usePassword;
   final _formKey = GlobalKey<FormState>();
+  final List<_HeaderRow> _headerRows = [];
 
   @override
   void initState() {
     super.initState();
     _hideCustomServer = widget.initialHideCustomServer;
     _usePassword = widget.initialUsePassword;
+    for (final entry in widget.initialHeaders.entries) {
+      _headerRows.add(_HeaderRow(name: entry.key, value: entry.value));
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final row in _headerRows) {
+      row.dispose();
+    }
+    super.dispose();
   }
 
   void _set(VoidCallback change) {
     setState(change);
     widget.onChanged(_hideCustomServer, _usePassword);
+  }
+
+  /// Collects the completed header rows into a map, skipping rows that are
+  /// still entirely empty. Header names are trimmed; a later duplicate name
+  /// wins.
+  Map<String, String> _collectHeaders() {
+    final out = <String, String>{};
+    for (final row in _headerRows) {
+      final name = row.name.text.trim();
+      if (name.isEmpty && row.value.text.isEmpty) {
+        continue;
+      }
+      out[name] = row.value.text;
+    }
+    return out;
+  }
+
+  void _addHeaderRow() {
+    setState(() => _headerRows.add(_HeaderRow()));
+  }
+
+  void _removeHeaderRow(int index) {
+    setState(() {
+      _headerRows.removeAt(index).dispose();
+    });
+    widget.onHeadersChanged(_collectHeaders());
   }
 
   @override
@@ -151,6 +213,7 @@ class _AdvancedSheetState extends State<AdvancedSheet> {
                   padding: const EdgeInsets.only(top: 2, bottom: 4),
                   child: ServerField(controller: widget.serverUrlController),
                 ),
+              if (!_hideCustomServer) _buildHeadersSection(context, i18n),
               if (widget.loginMode) ...[
                 _SectionLabel(text: i18n.signInMethodSectionLabel),
                 _OptionRow(
@@ -174,6 +237,9 @@ class _AdvancedSheetState extends State<AdvancedSheet> {
                   key: const Key('advancedDoneButton'),
                   onPressed: () {
                     if (_formKey.currentState?.validate() ?? true) {
+                      widget.onHeadersChanged(
+                        _hideCustomServer ? const {} : _collectHeaders(),
+                      );
                       Navigator.pop(context);
                     }
                   },
@@ -195,6 +261,83 @@ class _AdvancedSheetState extends State<AdvancedSheet> {
       ),
     );
   }
+
+  Widget _buildHeadersSection(BuildContext context, AppLocalizations i18n) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionLabel(text: i18n.customHeadersSectionLabel),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            i18n.customHeadersHint,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        for (var i = 0; i < _headerRows.length; i++)
+          Padding(
+            key: ValueKey(_headerRows[i]),
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _headerRows[i].name,
+                    decoration: InputDecoration(
+                      labelText: i18n.customHeaderNameLabel,
+                      isDense: true,
+                    ),
+                    validator: (_) {
+                      final row = _headerRows[i];
+                      if (row.name.text.trim().isEmpty && row.value.text.isNotEmpty) {
+                        return i18n.customHeaderNameRequired;
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextFormField(
+                    controller: _headerRows[i].value,
+                    decoration: InputDecoration(
+                      labelText: i18n.customHeaderValueLabel,
+                      isDense: true,
+                    ),
+                    validator: (_) {
+                      final row = _headerRows[i];
+                      if (row.name.text.trim().isNotEmpty && row.value.text.isEmpty) {
+                        return i18n.customHeaderValueRequired;
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                IconButton(
+                  tooltip: i18n.delete,
+                  icon: const Icon(Icons.close),
+                  onPressed: () => _removeHeaderRow(i),
+                ),
+              ],
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('addHeaderButton'),
+            onPressed: _addHeaderRow,
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(i18n.customHeaderAdd),
+          ),
+        ),
+      ],
+    );
+  }
+
 }
 
 class _SectionLabel extends StatelessWidget {

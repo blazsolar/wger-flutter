@@ -36,6 +36,7 @@ import 'package:wger/core/helpers.dart';
 import 'package:wger/core/network/auth_credentials_storage.dart';
 import 'package:wger/core/network/auth_http_client.dart';
 import 'package:wger/core/network/auth_state.dart';
+import 'package:wger/core/network/custom_headers.dart';
 import 'package:wger/core/network/jwt.dart';
 import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/network/server_gating.dart';
@@ -67,7 +68,18 @@ const ISSUE_REFRESH_TOKEN_PATH = 'issue-refresh-token';
 const HEADLESS_SESSION_TOKEN_HEADER = 'X-Session-Token';
 
 /// HTTP client used by the auth notifier. Override in tests.
-final authHttpClientProvider = Provider<http.Client>((ref) => http.Client());
+///
+/// Wraps the raw client in a [CustomHeadersHttpClient] so the user-defined
+/// custom headers (e.g. Cloudflare Access service tokens for a self-hosted
+/// server) are added to every outgoing request. Because both the auth notifier
+/// / gating (which read this directly) and [authenticatedHttpClientProvider]
+/// (which wraps this) go through here, a single wrapper covers login, refresh,
+/// version/reachability probes, every data-API call, and the PowerSync
+/// connector's REST calls.
+final authHttpClientProvider = Provider<http.Client>((ref) {
+  final holder = ref.read(customHeadersHolderProvider);
+  return CustomHeadersHttpClient(inner: http.Client(), read: () => holder.headers);
+});
 
 @Riverpod(keepAlive: true)
 class AuthNotifier extends _$AuthNotifier {
@@ -75,6 +87,8 @@ class AuthNotifier extends _$AuthNotifier {
   late http.Client _client;
   late AuthCredentialsStorage _storage;
   late ServerGating _gating;
+  late CustomHeadersStorage _headersStorage;
+  late CustomHeadersHolder _headersHolder;
 
   /// Holds the in-flight refresh future so concurrent callers share a single
   /// network roundtrip. Cleared in `whenComplete` so the next refresh starts
@@ -97,6 +111,14 @@ class AuthNotifier extends _$AuthNotifier {
     _client = ref.read(authHttpClientProvider);
     _storage = ref.read(authCredentialsStorageProvider);
     _gating = ref.read(serverGatingProvider);
+    _headersStorage = ref.read(customHeadersStorageProvider);
+    _headersHolder = ref.read(customHeadersHolderProvider);
+
+    // Load any persisted custom headers into the in-memory holder before the
+    // auto-login probes fire, so a self-hosted server behind e.g. Cloudflare
+    // Access is reachable on a cold start.
+    _headersHolder.set(await _headersStorage.read());
+
     return _tryAutoLogin();
   }
 
@@ -109,7 +131,11 @@ class AuthNotifier extends _$AuthNotifier {
     required String email,
     required String serverUrl,
     String locale = 'en',
+    Map<String, String>? customHeaders,
   }) async {
+    if (customHeaders != null) {
+      _headersHolder.set(customHeaders);
+    }
     final appVersion = _currentOrBlank().applicationVersion ?? await PackageInfo.fromPlatform();
     final version = await _gateBeforeAuth(serverUrl, appVersion);
     if (version.tooOld) {
@@ -144,8 +170,15 @@ class AuthNotifier extends _$AuthNotifier {
     String username,
     String password,
     String serverUrl,
-    String? refreshToken,
-  ) async {
+    String? refreshToken, {
+    Map<String, String>? customHeaders,
+  }) async {
+    // null means "keep the headers already in the holder" (used by the
+    // web-handoff redemption path, which set them before launching the
+    // browser); a non-null map (from the login form) replaces them.
+    if (customHeaders != null) {
+      _headersHolder.set(customHeaders);
+    }
     final appVersion = _currentOrBlank().applicationVersion ?? await PackageInfo.fromPlatform();
     final version = await _gateBeforeAuth(serverUrl, appVersion);
     if (version.tooOld) {
@@ -341,6 +374,10 @@ class AuthNotifier extends _$AuthNotifier {
       refreshToken: creds.refreshToken,
       serverUrl: serverUrl,
     );
+    // Persist the custom headers that were applied for this login (empty for
+    // the official server, which clears any previously stored ones) so they
+    // are restored on the next cold start.
+    await _headersStorage.write(_headersHolder.headers);
 
     final status = await _gating.resolve(
       credential: creds.credential,
@@ -870,6 +907,12 @@ class AuthNotifier extends _$AuthNotifier {
   Future<void> logout() async {
     final keepData = await _storage.keepDataOnLogout();
     await _resetSession(wipeLocalData: !keepData);
+    // Explicit logout drops the stored custom headers (they may be secret,
+    // e.g. a Cloudflare Access service-token secret). An involuntary session
+    // loss (clearSessionOnly) keeps them so the user can silently re-auth
+    // against a gated self-hosted server without re-entering them.
+    _headersHolder.set(const {});
+    await _headersStorage.clear();
   }
 
   /// Involuntary session loss: clears credentials but **keeps** the local
@@ -988,6 +1031,15 @@ class AuthNotifier extends _$AuthNotifier {
     }
     final v = await _gating.fetchServerVersion(current.serverUrl!);
     state = AsyncData(current.copyWith(serverVersion: v));
+  }
+
+  /// Applies [headers] as the active custom request headers without persisting
+  /// them. Used by the web-handoff flow to make the entered headers available
+  /// for the deep-link token redemption that runs after the browser round-trip
+  /// (that path calls [login] with a null `customHeaders` to keep these).
+  /// Persistence happens on successful login via [_completeLogin].
+  void setCustomHeaders(Map<String, String> headers) {
+    _headersHolder.set(headers);
   }
 
   /// Loads the last server URL the user successfully logged in with.

@@ -82,6 +82,11 @@ const KEEP_DATA_ON_LOGOUT_DEFAULT = true;
 /// Secure-storage key for the headless refresh token.
 const SECURE_STORAGE_REFRESH_TOKEN = 'wger_refresh_token';
 
+/// Secure-storage key for the user-defined custom request headers sent with
+/// every request to a self-hosted server (e.g. Cloudflare Access service
+/// tokens). Stored as a JSON object of header name -> value.
+const SECURE_STORAGE_CUSTOM_HEADERS = 'wger_custom_headers';
+
 /// Login-CSRF defence for the web-handoff flow. Stored in SharedPreferences
 /// (not a secret, just a one-shot nonce echoed back by the server).
 const PREFS_APP_AUTH_STATE = 'appAuthState';
