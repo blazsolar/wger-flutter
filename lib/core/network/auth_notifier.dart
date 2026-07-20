@@ -21,7 +21,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show kDebugMode, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart' show Provider;
 import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
@@ -38,6 +38,7 @@ import 'package:wger/core/network/auth_http_client.dart';
 import 'package:wger/core/network/auth_state.dart';
 import 'package:wger/core/network/custom_headers.dart';
 import 'package:wger/core/network/jwt.dart';
+import 'package:wger/core/network/logging_http_client.dart';
 import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/network/server_gating.dart';
 import 'package:wger/core/shared_preferences.dart';
@@ -78,7 +79,11 @@ const HEADLESS_SESSION_TOKEN_HEADER = 'X-Session-Token';
 /// connector's REST calls.
 final authHttpClientProvider = Provider<http.Client>((ref) {
   final holder = ref.read(customHeadersHolderProvider);
-  return CustomHeadersHttpClient(inner: http.Client(), read: () => holder.headers);
+  // In debug builds trace every request as the innermost client, so the log
+  // shows the final headers (custom + Authorization) and pinpoints any request
+  // that leaves `/api` (e.g. the `/allauth/app/v1/...` auth endpoints).
+  final http.Client base = kDebugMode ? LoggingHttpClient(http.Client()) : http.Client();
+  return CustomHeadersHttpClient(inner: base, read: () => holder.headers);
 });
 
 @Riverpod(keepAlive: true)
