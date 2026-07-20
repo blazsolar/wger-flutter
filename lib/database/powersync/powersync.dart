@@ -28,6 +28,7 @@ import 'package:powersync/powersync.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:stream_transform/stream_transform.dart';
 import 'package:wger/core/network/auth_http_client.dart';
+import 'package:wger/core/network/custom_headers.dart';
 import 'package:wger/core/network/network_provider.dart';
 import 'package:wger/core/network/wger_base.dart';
 import 'package:wger/powersync/api_client.dart';
@@ -70,7 +71,12 @@ Future<PowerSyncDatabase> powerSyncInstance(Ref ref) async {
     if (isOnline) {
       final serverUrl = ref.read(wgerBaseProvider).serverUrl;
       if (serverUrl != null) {
-        connectPowerSync(db, serverUrl, client);
+        connectPowerSync(
+          db,
+          serverUrl,
+          client,
+          customHeaders: ref.read(customHeadersHolderProvider).headers,
+        );
       }
     } else {
       db.disconnect();
@@ -165,12 +171,27 @@ Future<void> _createRawTables(PowerSyncDatabase db) async {
 /// HTTP client (see [authenticatedHttpClientProvider]); the connector reuses
 /// it for its REST calls so the same `Authorization` injection and
 /// pre-emptive refresh apply.
-void connectPowerSync(PowerSyncDatabase db, String baseUrl, http.Client client) {
+///
+/// [customHeaders] are the user-defined headers for a self-hosted server (e.g.
+/// Cloudflare Access service tokens). The connector's REST calls already carry
+/// them via [client]; passing them here additionally injects them into the
+/// PowerSync *sync* connection (the streaming download to the sync endpoint),
+/// which uses its own HTTP client that the app's wrapper never sees. Without
+/// this, a sync endpoint behind the same access proxy answers 403.
+void connectPowerSync(
+  PowerSyncDatabase db,
+  String baseUrl,
+  http.Client client, {
+  Map<String, String> customHeaders = const {},
+}) {
   db.connect(
     connector: DjangoConnector(
       baseUrl: baseUrl,
       apiClient: ApiClient(baseUrl, client: client),
     ),
+    options: customHeaders.isEmpty
+        ? const SyncOptions()
+        : SyncOptions(httpClient: customHeadersClientFactory(customHeaders)),
   );
 }
 

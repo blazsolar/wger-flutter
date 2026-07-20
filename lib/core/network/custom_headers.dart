@@ -124,6 +124,20 @@ final customHeadersHolderProvider = Provider<CustomHeadersHolder>(
   (ref) => CustomHeadersHolder(),
 );
 
+/// Builds a PowerSync `HttpClientFactory` (`http.Client Function()`) that
+/// injects [headers] into the sync-service connection (the streaming download
+/// to the PowerSync endpoint, which the app's own client never touches).
+///
+/// PowerSync sends this factory to a background isolate, so it may only capture
+/// sendable state: this deliberately snapshots [headers] into a plain string
+/// map and captures that copy, never the [CustomHeadersHolder] or any live
+/// state. A snapshot is the right lifecycle anyway — the connection is
+/// re-established (with fresh headers) on every login, and torn down on logout.
+http.Client Function() customHeadersClientFactory(Map<String, String> headers) {
+  final snapshot = Map<String, String>.of(headers);
+  return () => CustomHeadersHttpClient(inner: http.Client(), read: () => snapshot);
+}
+
 /// HTTP client wrapper that adds the user-defined custom headers to every
 /// outgoing request. Uses `putIfAbsent` so it never clobbers headers the app
 /// itself sets (`Authorization`, `Content-Type`, ...); custom headers carry
